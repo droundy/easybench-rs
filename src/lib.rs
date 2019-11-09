@@ -291,10 +291,8 @@ where
     // The time we started the benchmark (not used in results)
     let bench_start = Instant::now();
 
-    let mut fib = SlowFib::new();
     // Collect data until BENCH_TIME_MAX is reached.
-    loop {
-        let iters = fib.next().unwrap();
+    for iters in SlowFib::new() {
         // Prepare the environments - one per iteration
         let mut xs = std::iter::repeat_with(&mut gen_env)
             .take(iters)
@@ -330,6 +328,7 @@ where
             }
         }
     }
+    unreachable!()
 }
 
 /// Statistics for a benchmark run determining the scaling of a function.
