@@ -44,11 +44,16 @@ during which your code may be run many times. In other words: taking a sample
 means performing some number of iterations and measuring the total time.
 
 The first sample we take performs only 1 iteration, but as we continue
-taking samples we increase the number of iterations with increasing
-rapidity. We
+<<<<<<< HEAD
+taking samples we increase the number of iterations exponentially. We
 stop either when a global time limit is reached (currently 10 seconds),
 or when we have collected sufficient statistics (but have run for at
 least a millisecond).
+=======
+taking samples we increase the number of iterations with increasing
+rapidity. We stop when a global time limit is reached (currently 1
+second).
+>>>>>>> fib-sequence
 
 If a benchmark must mutate some state while running, before taking a sample
 `n` copies of the initial state are prepared, where `n` is the number of
@@ -171,12 +176,25 @@ use std::f64;
 use std::fmt::{self, Display, Formatter};
 use std::time::*;
 
+<<<<<<< HEAD
+// Each time we take a sample we increase the number of iterations:
+//      iters = ITER_SCALE_FACTOR ^ sample_no
+const ITER_SCALE_FACTOR: f64 = 1.1;
+
+// Each time we take a sample we increase the number `n`:
+//      n = N_SCALE_FACTOR ^ sample_no
+const N_SCALE_FACTOR: f64 = 1.5;
+
 // We try to spend at most this many seconds (roughly) in total on
 // each benchmark.
 const BENCH_TIME_MAX: Duration = Duration::from_secs(10);
 // We try to spend at least this many seconds in total on each
 // benchmark.
 const BENCH_TIME_MIN: Duration = Duration::from_millis(1);
+=======
+// We try to spend this many seconds (roughly) in total on each benchmark.
+const BENCH_TIME_LIMIT: Duration = Duration::from_secs(1);
+>>>>>>> fib-sequence
 
 /// Statistics for a benchmark run.
 #[derive(Debug, PartialEq, Clone)]
@@ -291,10 +309,16 @@ where
     // The time we started the benchmark (not used in results)
     let bench_start = Instant::now();
 
-    let mut fib = SlowFib::new();
+<<<<<<< HEAD
     // Collect data until BENCH_TIME_MAX is reached.
     loop {
+        let iters = ITER_SCALE_FACTOR.powi(data.len() as i32).round() as usize;
+=======
+    let mut fib = SlowFib::new();
+    // Collect data until BENCH_TIME_LIMIT is reached.
+    while bench_start.elapsed() < BENCH_TIME_LIMIT {
         let iters = fib.next().unwrap();
+>>>>>>> fib-sequence
         // Prepare the environments - one per iteration
         let mut xs = std::iter::repeat_with(&mut gen_env)
             .take(iters)
@@ -415,18 +439,19 @@ where
     G: FnMut(usize) -> I,
     F: Fn(&mut I) -> O,
 {
+    let nmin = nmin as f64;
     let mut data = Vec::new();
     // The time we started the benchmark (not used in results)
     let bench_start = Instant::now();
 
     // Collect data until BENCH_TIME_MAX is reached.
-    for iters_times_n in SlowFib::new() {
-        let nmax = if nmax > iters_times_n { iters_times_n } else { nmax };
-        for n in SlowFib::new()
-            .map(|n| n + nmin - 1)
-            .take_while(|n| *n <= nmax)
-        {
-            let iters = iters_times_n/n;
+    for iterlog_plus_n in 0i32.. {
+        for iterlog in 0..iterlog_plus_n {
+            let iters = ITER_SCALE_FACTOR.powi(iterlog).round() as usize;
+            let n = (nmin*N_SCALE_FACTOR.powi(iterlog_plus_n-iterlog)).ceil() as usize;
+            if n > nmax {
+                continue;
+            }
             // Prepare the environments - one per iteration
             let mut xs = std::iter::repeat_with(|| { gen_env(n) })
                 .take(iters)
@@ -598,7 +623,7 @@ mod tests {
         println!("O(N): {}", stats);
         assert_eq!(stats.scaling.exponent, 1);
         println!("   error: {:e}", stats.scaling.ns_per_scale - 1e6);
-        assert!((stats.scaling.ns_per_scale - 1e6).abs() < 1e5);
+        assert!((stats.scaling.ns_per_scale - 1e6).abs() < 1e4);
     }
 
     #[test]
