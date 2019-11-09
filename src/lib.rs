@@ -593,12 +593,12 @@ mod tests {
         println!();
         let stats = bench_power_scaling(
             |n| {n},
-            |&mut n| { thread::sleep(Duration::from_millis(n as u64)) },
+            |&mut n| { thread::sleep(Duration::from_millis(10*n as u64)) },
             1, 1000);
         println!("O(N): {}", stats);
         assert_eq!(stats.scaling.exponent, 1);
-        println!("   error: {:e}", stats.scaling.ns_per_scale - 1e6);
-        assert!((stats.scaling.ns_per_scale - 1e6).abs() < 1e5);
+        println!("   error: {:e}", stats.scaling.ns_per_scale - 1e7);
+        assert!((stats.scaling.ns_per_scale - 1e7).abs() < 1e5);
     }
 
     #[test]
@@ -606,12 +606,12 @@ mod tests {
         println!();
         let stats = bench_power_scaling(
             |n| {n},
-            |&mut n| { thread::sleep(Duration::from_millis((n*n) as u64)) },
+            |&mut n| { thread::sleep(Duration::from_millis(10*(n*n) as u64)) },
             1, 100);
         println!("O(N): {}", stats);
         assert_eq!(stats.scaling.exponent, 2);
-        println!("   error: {:e}", stats.scaling.ns_per_scale - 1e6);
-        assert!((stats.scaling.ns_per_scale - 1e6).abs() < 1e4);
+        println!("   error: {:e}", stats.scaling.ns_per_scale - 1e7);
+        assert!((stats.scaling.ns_per_scale - 1e7).abs() < 1e5);
     }
 
     #[test]
