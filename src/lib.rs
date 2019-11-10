@@ -367,7 +367,13 @@ impl Display for Scaling {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         let per_iter: humantime::Duration =
             Duration::from_nanos(self.ns_per_scale as u64).into();
-        let per_iter = format!("{}", per_iter);
+        let per_iter = if self.ns_per_scale < 1.0 {
+            format!("{:.2}ns", self.ns_per_scale)
+        } else if self.ns_per_scale < 10.0 {
+            format!("{:.1}ns", self.ns_per_scale)
+        } else {
+            format!("{}", per_iter)
+        };
         match self.exponent {
             0 => write!(f, "{:>8}/iter", per_iter),
             1 => write!(f, "{:>8}/N   ", per_iter),
@@ -419,8 +425,15 @@ where
     let bench_start = Instant::now();
 
     // Collect data until BENCH_TIME_MAX is reached.
-    for (n,iters) in iters_n_sequence(nmin, nmax) {
+    for iters in slow_fib(BENCH_SCALE_TIME) {
         // Prepare the environments - one per iteration
+        let n = if iters < nmin {
+            nmin
+        } else if iters <= nmax {
+            iters
+        } else {
+            nmin + (iters - nmin) % (1 + nmax - nmin)
+        };
         let mut xs = std::iter::repeat_with(|| { gen_env(n) })
             .take(iters)
             .collect::<Vec<I>>();
@@ -469,13 +482,13 @@ where
                 (stats[bestpow].goodness_of_fit > 0.99
                  && stats[second_bestpow].goodness_of_fit < stats[bestpow].goodness_of_fit)
             {
-                println!("finished after {:6}s", elapsed.as_nanos() as f64/1e9);
-                for s in stats.iter() {
-                    println!("  {}", s);
-                }
-                for d in data[data.len()-4..].iter() {
-                    println!("    {}, {} -> {} ns", d.0, d.1, d.2.as_nanos());
-                }
+                // println!("finished after {:6}s", elapsed.as_nanos() as f64/1e9);
+                // for s in stats.iter() {
+                //     println!("  {}", s);
+                // }
+                // for d in data[data.len()-4..].iter() {
+                //     println!("    {}, {} -> {} ns", d.0, d.1, d.2.as_nanos());
+                // }
                 return stats[bestpow].clone();
             }
         }
@@ -609,15 +622,14 @@ mod tests {
         println!("   error: {:e}", stats.scaling.ns_per_scale - 1e7);
         assert!((stats.scaling.ns_per_scale - 1e7).abs() < 1e5);
 
-        // println!();
-        // let stats = bench_power_scaling(
-        //     |n| {n},
-        //     |&mut n| { (0 .. n as u64).sum::<u64>() },
-        //     1, 1000000);
-        // println!("O(N): {}", stats);
-        // assert_eq!(stats.scaling.exponent, 1);
-        // println!("   error: {:e}", stats.scaling.ns_per_scale - 1e7);
-        // assert!((stats.scaling.ns_per_scale - 1e7).abs() < 1e5);
+        println!();
+        let stats = bench_power_scaling(
+            |n| {n},
+            |&mut n| { (0 .. n as u64).sum::<u64>() },
+            1, 1000000);
+        println!("O(N): {}", stats);
+        println!("   error: {:e}", stats.scaling.ns_per_scale - 1e7);
+        assert_eq!(stats.scaling.exponent, 1);
     }
 
     #[test]
@@ -786,63 +798,5 @@ fn test_fib() {
     assert_eq!(&previous_sequence,
                &[ 7, 7, 8, 9,10,11,12,13,14,16,
                  17,19,21,23,26,28,31,34,37,41,
-               ]);
-}
-
-fn iters_n_sequence(nmin: usize, nmax: usize) -> impl Iterator<Item=(usize,usize)> {
-    let c1 = 2.0f64.sqrt();
-    let c2 = 3.0f64.sqrt();
-    let dn = 1 + nmax - nmin;
-    [(1,1),
-     (1,2),
-     (2,1),
-     (1,3),
-     (2,2),
-     (3,1),
-     (1,8),
-     (2,4),
-     (3,3),
-     (8,1),
-     ( 1,16),
-     ( 2, 8),
-     ( 4, 4),
-     ( 8, 2),
-     (16, 1),
-    ].into_iter().map(move |(n,i)| { ((nmin*n)%dn, *i) })
-        .chain(slow_fib(25).skip(24).enumerate()
-               .map(move |(count,i)| {
-                   let max = if i < dn { i } else { dn };
-                   let a = (c1*count as f64).rem_euclid(1.0);
-                   let b = (c2*count as f64).rem_euclid(1.0);
-                   let n = nmin + (max as f64*b) as usize;
-                   let iters = 1 + (i as f64*a).floor() as usize;
-                   (n, iters)
-               }))
-        .map(|(n,iters) : (usize,usize)| {
-            println!("  {}, {}", n, iters);
-            (n, iters)
-        })
-}
-
-#[test]
-fn test_fib_pairs() {
-    // This is me testing a reasonable sequence of N,iters pairs.
-    let pairs_sequence: Vec<_> = iters_n_sequence(1,1000000).take(48).collect();
-    assert_eq!(&pairs_sequence[8..23],
-               &[( 3, 3),
-                 ( 8, 1),
-                 ( 1,16),
-                 ( 2, 8),
-                 ( 4, 4),
-                 ( 8, 2),
-                 (16, 1),
-                 ( 1, 1),
-                 (19,11),
-                 (13,22),
-                 ( 6, 7),
-                 (29,21),
-                 (24, 3),
-                 (16,20),
-                 ( 6,42),
                ]);
 }
