@@ -292,7 +292,7 @@ where
     let bench_start = Instant::now();
 
     // Collect data until BENCH_TIME_MAX is reached.
-    for iters in SlowFib::new() {
+    for iters in slow_fib(BENCH_SCALE_TIME) {
         // Prepare the environments - one per iteration
         let mut xs = std::iter::repeat_with(&mut gen_env)
             .take(iters)
@@ -419,31 +419,24 @@ where
     let bench_start = Instant::now();
 
     // Collect data until BENCH_TIME_MAX is reached.
-    for iters_times_n in SlowFib::new() {
-        let nmax = if nmax > iters_times_n { iters_times_n } else { nmax };
-        for n in SlowFib::new()
-            .skip_while(|n| *n < nmin)
-            .take_while(|n| *n <= nmax)
-        {
-            let iters = iters_times_n/n;
-            // Prepare the environments - one per iteration
-            let mut xs = std::iter::repeat_with(|| { gen_env(n) })
-                .take(iters)
-                .collect::<Vec<I>>();
-            // Start the clock
-            let iter_start = Instant::now();
-            // We iterate over `&mut xs` rather than draining it, because we
-            // don't want to drop the env values until after the clock has stopped.
-            for x in &mut xs {
-                // Run the code and pretend to use the output
-                pretend_to_use(f(x));
-            }
-            let time = iter_start.elapsed();
-            data.push((n, iters, time));
+    for (n,iters) in iters_n_sequence(nmin, nmax) {
+        // Prepare the environments - one per iteration
+        let mut xs = std::iter::repeat_with(|| { gen_env(n) })
+            .take(iters)
+            .collect::<Vec<I>>();
+        // Start the clock
+        let iter_start = Instant::now();
+        // We iterate over `&mut xs` rather than draining it, because we
+        // don't want to drop the env values until after the clock has stopped.
+        for x in &mut xs {
+            // Run the code and pretend to use the output
+            pretend_to_use(f(x));
         }
+        let time = iter_start.elapsed();
+        data.push((n, iters, time));
 
         let elapsed = bench_start.elapsed();
-        if elapsed > BENCH_TIME_MIN && data.len() > 4 {
+        if elapsed > BENCH_TIME_MIN && data.len() > 5 {
             // If the first iter in a sample is consistently slow, that's fine -
             // that's why we do the linear regression. If the first sample is slower
             // than the rest, however, that's not fine.  Therefore, we discard the
@@ -453,6 +446,7 @@ where
             // powers, to see which seems most accurate.
             let mut stats = Vec::new();
             let mut bestpow = 0;
+            let mut second_bestpow = 0;
             for pow in 0..5 {
                 let pdata: Vec<_> = data[1..].iter()
                     .map(|(n,i,t)| { (n.pow(pow)*i, *t) }).collect();
@@ -467,14 +461,21 @@ where
                     samples: data[1..].len(),
                 });
                 if r2 > stats[bestpow].goodness_of_fit {
+                    second_bestpow = bestpow;
                     bestpow = pow as usize;
                 }
             }
-            if elapsed > BENCH_TIME_MAX || stats[bestpow].goodness_of_fit > 0.99 {
-                // println!("finished after {:6}s", elapsed.as_nanos() as f64/1e9);
-                // for s in stats.iter() {
-                //     println!("  {}", s);
-                // }
+            if elapsed > BENCH_TIME_MAX ||
+                (stats[bestpow].goodness_of_fit > 0.99
+                 && stats[second_bestpow].goodness_of_fit < stats[bestpow].goodness_of_fit)
+            {
+                println!("finished after {:6}s", elapsed.as_nanos() as f64/1e9);
+                for s in stats.iter() {
+                    println!("  {}", s);
+                }
+                for d in data[data.len()-4..].iter() {
+                    println!("    {}, {} -> {} ns", d.0, d.1, d.2.as_nanos());
+                }
                 return stats[bestpow].clone();
             }
         }
@@ -593,7 +594,7 @@ mod tests {
         println!("O(N): {}", stats);
         assert_eq!(stats.scaling.exponent, 0);
         println!("   error: {:e}", stats.scaling.ns_per_scale - 1e7);
-        assert!((stats.scaling.ns_per_scale - 1e7).abs() < 2e5);
+        assert!((stats.scaling.ns_per_scale - 1e7).abs() < 1e6);
     }
 
     #[test]
@@ -607,6 +608,16 @@ mod tests {
         assert_eq!(stats.scaling.exponent, 1);
         println!("   error: {:e}", stats.scaling.ns_per_scale - 1e7);
         assert!((stats.scaling.ns_per_scale - 1e7).abs() < 1e5);
+
+        // println!();
+        // let stats = bench_power_scaling(
+        //     |n| {n},
+        //     |&mut n| { (0 .. n as u64).sum::<u64>() },
+        //     1, 1000000);
+        // println!("O(N): {}", stats);
+        // assert_eq!(stats.scaling.exponent, 1);
+        // println!("   error: {:e}", stats.scaling.ns_per_scale - 1e7);
+        // assert!((stats.scaling.ns_per_scale - 1e7).abs() < 1e5);
     }
 
     #[test]
@@ -702,39 +713,42 @@ mod tests {
 
 // Each time we take a sample we increase the number of iterations
 // using a slow version of the Fibonacci sequence, which
-// asymptotically increases with a power of 1.1.  This was chosen to
-// match the prior behavior of the library.  The advantage of this
-// approach is that it does not repeat 1 more than twice (once for
-// warmup) and thus provides nicer statistics.
+// asymptotically grows exponentially, but also gives us a different
+// value each time (except for repeating 1 twice, once for warmup).
+
+// For our standard `bench_*` we use slow_fib(25), which was chosen to
+// asymptotically match the prior behavior of the library, which grew
+// by an exponential of 1.1.
 const BENCH_SCALE_TIME: usize = 25;
-#[derive(Debug)]
-struct SlowFib {
-    which: usize,
-    buffer: [usize; BENCH_SCALE_TIME],
-}
-impl SlowFib {
-    fn new() -> Self {
-        let mut buffer = [1; BENCH_SCALE_TIME];
-        // buffer needs just the two zeros to make it start with two 1
-        // values.  The rest should be 1s.
-        buffer[1] = 0;
-        buffer[2] = 0;
-        SlowFib {
-            which: 0,
-            buffer,
+
+fn slow_fib(scale_time: usize) -> impl Iterator<Item=usize> {
+    #[derive(Debug)]
+    struct SlowFib {
+        which: usize,
+        buffer: Vec<usize>,
+    }
+    impl Iterator for SlowFib {
+        type Item = usize;
+        fn next(&mut self) -> Option<usize> {
+            // println!("!!! {:?}", self);
+            let oldwhich = self.which;
+            self.which = (self.which + 1) % self.buffer.len();
+            self.buffer[self.which] = self.buffer[oldwhich] + self.buffer[self.which];
+            Some(self.buffer[self.which])
         }
     }
-}
-impl Iterator for SlowFib {
-    type Item = usize;
-    fn next(&mut self) -> Option<usize> {
-        // println!("!!! {:?}", self);
-        let oldwhich = self.which;
-        self.which = (self.which + 1) % BENCH_SCALE_TIME;
-        self.buffer[self.which] = self.buffer[oldwhich] + self.buffer[self.which];
-        Some(self.buffer[self.which])
+    assert!(scale_time > 3);
+    let mut buffer = vec![1; scale_time];
+    // buffer needs just the two zeros to make it start with two 1
+    // values.  The rest should be 1s.
+    buffer[1] = 0;
+    buffer[2] = 0;
+    SlowFib {
+        which: 0,
+        buffer,
     }
 }
+
 #[test]
 fn test_fib() {
     // The following code was used to demonstrate that asymptotically
@@ -745,14 +759,14 @@ fn test_fib() {
     // which hopefully leads to better linear regression, particularly
     // if we can only run a few iterations.
     let mut prev = 1;
-    for x in SlowFib::new().take(200) {
+    for x in slow_fib(25).take(200) {
         let rat = x as f64 / prev as f64;
         println!("ratio: {}/{} = {}", prev, x, rat);
         prev = x;
     }
-    let five: Vec<_> = SlowFib::new().take(5).collect();
+    let five: Vec<_> = slow_fib(25).take(5).collect();
     assert_eq!(&five, &[1,1,2,3,4]);
-    let more: Vec<_> = SlowFib::new().take(32).collect();
+    let more: Vec<_> = slow_fib(25).take(32).collect();
     assert_eq!(&more,
                &[ 1, 1, 2, 3, 4, 5, 6, 7, 8, 9,
                  10,11,12,13,14,15,16,17,18,19,
@@ -772,5 +786,63 @@ fn test_fib() {
     assert_eq!(&previous_sequence,
                &[ 7, 7, 8, 9,10,11,12,13,14,16,
                  17,19,21,23,26,28,31,34,37,41,
+               ]);
+}
+
+fn iters_n_sequence(nmin: usize, nmax: usize) -> impl Iterator<Item=(usize,usize)> {
+    let c1 = 2.0f64.sqrt();
+    let c2 = 3.0f64.sqrt();
+    let dn = 1 + nmax - nmin;
+    [(1,1),
+     (1,2),
+     (2,1),
+     (1,3),
+     (2,2),
+     (3,1),
+     (1,8),
+     (2,4),
+     (3,3),
+     (8,1),
+     ( 1,16),
+     ( 2, 8),
+     ( 4, 4),
+     ( 8, 2),
+     (16, 1),
+    ].into_iter().map(move |(n,i)| { ((nmin*n)%dn, *i) })
+        .chain(slow_fib(25).skip(24).enumerate()
+               .map(move |(count,i)| {
+                   let max = if i < dn { i } else { dn };
+                   let a = (c1*count as f64).rem_euclid(1.0);
+                   let b = (c2*count as f64).rem_euclid(1.0);
+                   let n = nmin + (max as f64*b) as usize;
+                   let iters = 1 + (i as f64*a).floor() as usize;
+                   (n, iters)
+               }))
+        .map(|(n,iters) : (usize,usize)| {
+            println!("  {}, {}", n, iters);
+            (n, iters)
+        })
+}
+
+#[test]
+fn test_fib_pairs() {
+    // This is me testing a reasonable sequence of N,iters pairs.
+    let pairs_sequence: Vec<_> = iters_n_sequence(1,1000000).take(48).collect();
+    assert_eq!(&pairs_sequence[8..23],
+               &[( 3, 3),
+                 ( 8, 1),
+                 ( 1,16),
+                 ( 2, 8),
+                 ( 4, 4),
+                 ( 8, 2),
+                 (16, 1),
+                 ( 1, 1),
+                 (19,11),
+                 (13,22),
+                 ( 6, 7),
+                 (29,21),
+                 (24, 3),
+                 (16,20),
+                 ( 6,42),
                ]);
 }
