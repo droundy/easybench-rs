@@ -369,17 +369,17 @@ impl Display for Scaling {
             Duration::from_nanos(self.ns_per_scale as u64).into();
         let per_iter = format!("{}", per_iter);
         match self.exponent {
-            0 => write!(f, "{:>11}/iter", per_iter),
-            1 => write!(f, "{:>11}/N", per_iter),
-            2 => write!(f, "{:>11}/N²", per_iter),
-            3 => write!(f, "{:>11}/N³", per_iter),
-            4 => write!(f, "{:>11}/N⁴", per_iter),
-            5 => write!(f, "{:>11}/N⁵", per_iter),
-            6 => write!(f, "{:>11}/N⁶", per_iter),
-            7 => write!(f, "{:>11}/N⁷", per_iter),
-            8 => write!(f, "{:>11}/N⁸", per_iter),
-            9 => write!(f, "{:>11}/N⁹", per_iter),
-            _ => write!(f, "{:>11}/N^{}", per_iter, self.exponent),
+            0 => write!(f, "{:>8}/iter", per_iter),
+            1 => write!(f, "{:>8}/N   ", per_iter),
+            2 => write!(f, "{:>8}/N²  ", per_iter),
+            3 => write!(f, "{:>8}/N³  ", per_iter),
+            4 => write!(f, "{:>8}/N⁴  ", per_iter),
+            5 => write!(f, "{:>8}/N⁵  ", per_iter),
+            6 => write!(f, "{:>8}/N⁶  ", per_iter),
+            7 => write!(f, "{:>8}/N⁷  ", per_iter),
+            8 => write!(f, "{:>8}/N⁸  ", per_iter),
+            9 => write!(f, "{:>8}/N⁹  ", per_iter),
+            _ => write!(f, "{:>8}/N^{}", per_iter, self.exponent),
         }
     }
 }
@@ -422,7 +422,7 @@ where
     for iters_times_n in SlowFib::new() {
         let nmax = if nmax > iters_times_n { iters_times_n } else { nmax };
         for n in SlowFib::new()
-            .map(|n| n + nmin - 1)
+            .skip_while(|n| *n < nmin)
             .take_while(|n| *n <= nmax)
         {
             let iters = iters_times_n/n;
@@ -471,10 +471,15 @@ where
                 }
             }
             if elapsed > BENCH_TIME_MAX || stats[bestpow].goodness_of_fit > 0.99 {
+                // println!("finished after {:6}s", elapsed.as_nanos() as f64/1e9);
+                // for s in stats.iter() {
+                //     println!("  {}", s);
+                // }
                 return stats[bestpow].clone();
             }
         }
     }
+    println!("how did I get here?!");
     unreachable!()
 }
 
@@ -702,6 +707,7 @@ mod tests {
 // approach is that it does not repeat 1 more than twice (once for
 // warmup) and thus provides nicer statistics.
 const BENCH_SCALE_TIME: usize = 25;
+#[derive(Debug)]
 struct SlowFib {
     which: usize,
     buffer: [usize; BENCH_SCALE_TIME],
@@ -722,6 +728,7 @@ impl SlowFib {
 impl Iterator for SlowFib {
     type Item = usize;
     fn next(&mut self) -> Option<usize> {
+        // println!("!!! {:?}", self);
         let oldwhich = self.which;
         self.which = (self.which + 1) % BENCH_SCALE_TIME;
         self.buffer[self.which] = self.buffer[oldwhich] + self.buffer[self.which];
