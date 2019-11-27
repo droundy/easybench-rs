@@ -449,7 +449,7 @@ where
         data.push((n, iters, time));
 
         let elapsed = bench_start.elapsed();
-        if elapsed > BENCH_TIME_MIN && data.len() > 5 {
+        if elapsed > BENCH_TIME_MIN && data[data.len()-1].0 > 8*data[0].0 {
             // If the first iter in a sample is consistently slow, that's fine -
             // that's why we do the linear regression. If the first sample is slower
             // than the rest, however, that's not fine.  Therefore, we discard the
