@@ -415,7 +415,7 @@ impl Scaling {
 /// This function assumes that the function scales as an integer power
 /// of N, with the power not worse than O(N⁴).  It measures the power
 /// based on n R² goodness of fit parameter.
-pub fn bench_power_scaling<G, F, I, O>(mut gen_env: G, f: F, nmin: usize, nmax: usize) -> ScalingStats
+pub fn bench_power_scaling<G, F, I, O>(mut gen_env: G, f: F, nmin: usize) -> ScalingStats
 where
     G: FnMut(usize) -> I,
     F: Fn(&mut I) -> O,
@@ -426,14 +426,8 @@ where
 
     // Collect data until BENCH_TIME_MAX is reached.
     for iters in slow_fib(BENCH_SCALE_TIME) {
-        // Prepare the environments - one per iteration
-        let n = if iters < nmin {
-            nmin
-        } else if iters <= nmax {
-            iters
-        } else {
-            nmin + (iters - nmin) % (1 + nmax - nmin)
-        };
+        // Prepare the environments - nmin per iteration
+        let n = if nmin > 0 { iters*nmin } else { iters };
         let mut xs = std::iter::repeat_with(|| { gen_env(n) })
             .take(iters)
             .collect::<Vec<I>>();
@@ -449,7 +443,7 @@ where
         data.push((n, iters, time));
 
         let elapsed = bench_start.elapsed();
-        if elapsed > BENCH_TIME_MIN && data[data.len()-1].0 > 8*data[0].0 {
+        if elapsed > BENCH_TIME_MIN && data.len() > 6 {
             // If the first iter in a sample is consistently slow, that's fine -
             // that's why we do the linear regression. If the first sample is slower
             // than the rest, however, that's not fine.  Therefore, we discard the
