@@ -443,7 +443,7 @@ where
         data.push((n, iters, time));
 
         let elapsed = bench_start.elapsed();
-        if elapsed > BENCH_TIME_MIN && data.len() > 6 {
+        if elapsed > BENCH_TIME_MIN && data.len() > 10 {
             // If the first iter in a sample is consistently slow, that's fine -
             // that's why we do the linear regression. If the first sample is slower
             // than the rest, however, that's not fine.  Therefore, we discard the
@@ -597,7 +597,7 @@ mod tests {
         let stats = bench_power_scaling(
             |n| {n},
             |_| { thread::sleep(Duration::from_millis(10)) },
-            1, 1000);
+            1);
         println!("O(N): {}", stats);
         assert_eq!(stats.scaling.exponent, 0);
         println!("   error: {:e}", stats.scaling.ns_per_scale - 1e7);
@@ -610,7 +610,7 @@ mod tests {
         let stats = bench_power_scaling(
             |n| {n},
             |&mut n| { thread::sleep(Duration::from_millis(10*n as u64)) },
-            1, 1000);
+            1);
         println!("O(N): {}", stats);
         assert_eq!(stats.scaling.exponent, 1);
         println!("   error: {:e}", stats.scaling.ns_per_scale - 1e7);
@@ -620,7 +620,7 @@ mod tests {
         let stats = bench_power_scaling(
             |n| {n},
             |&mut n| { (0 .. n as u64).sum::<u64>() },
-            1, 1000000);
+            1);
         println!("O(N): {}", stats);
         println!("   error: {:e}", stats.scaling.ns_per_scale - 1e7);
         assert_eq!(stats.scaling.exponent, 1);
@@ -632,7 +632,7 @@ mod tests {
         let stats = bench_power_scaling(
             |n| {n},
             |&mut n| { thread::sleep(Duration::from_millis(10*(n*n) as u64)) },
-            1, 100);
+            1);
         println!("O(N): {}", stats);
         assert_eq!(stats.scaling.exponent, 2);
         println!("   error: {:e}", stats.scaling.ns_per_scale - 1e7);
