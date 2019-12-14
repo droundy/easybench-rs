@@ -456,8 +456,8 @@ where
             let mut second_bestpow = 0;
             for pow in 0..5 {
                 let pdata: Vec<_> = data[1..].iter()
-                    .map(|(n,i,t)| { (n.pow(pow)*i, *t) }).collect();
-                let (grad, r2) = regression(&pdata);
+                    .map(|&(n,i,t)| { ((n as f64).powi(pow)*(i as f64), t) }).collect();
+                let (grad, r2) = fregression(&pdata);
                 stats.push(ScalingStats {
                     scaling: Scaling {
                         exponent: pow as usize,
@@ -505,6 +505,35 @@ fn regression(data: &[(usize, Duration)]) -> (f64, f64) {
     // squared numbers to overflow using integer arithmetic if the
     // tests are too fast (so we run too many iterations).
     let data: Vec<_> = data.iter().map(|&(x, y)| (x as f64, as_nanos(y) as f64)).collect();
+    let n = data.len() as f64;
+    let nxbar = data.iter().map(|&(x, _)| x).sum::<f64>(); // iter_time > 5e-11 ns
+    let nybar = data.iter().map(|&(_, y)| y).sum::<f64>(); // TIME_LIMIT < 2 ^ 64 ns
+    let nxxbar = data.iter().map(|&(x, _)| x * x).sum::<f64>(); // num_iters < 13_000_000_000
+    let nyybar = data.iter().map(|&(_, y)| y * y).sum::<f64>(); // TIME_LIMIT < 4.3 e9 ns
+    let nxybar = data.iter().map(|&(x, y)| x * y).sum::<f64>();
+    let ncovar = nxybar - ((nxbar * nybar) / n);
+    let nxvar = nxxbar - ((nxbar * nxbar) / n);
+    let nyvar = nyybar - ((nybar * nybar) / n);
+    let gradient = ncovar / nxvar;
+    let r2 = (ncovar * ncovar) / (nxvar * nyvar);
+    assert!(r2.is_nan() || r2 <= 1.0);
+    (gradient, r2)
+}
+
+/// Compute the OLS linear regression line for the given data set, returning
+/// the line's gradient and R². Requires at least 2 samples.
+//
+// Overflows:
+//
+// * sum(x * x): num_samples <= 0.5 * log_k (1 + 2 ^ 64 (FACTOR - 1))
+fn fregression(data: &[(f64, Duration)]) -> (f64, f64) {
+    if data.len() < 2 {
+        return (f64::NAN, f64::NAN);
+    }
+    // Do all the arithmetic using f64, because it can happen that the
+    // squared numbers to overflow using integer arithmetic if the
+    // tests are too fast (so we run too many iterations).
+    let data: Vec<_> = data.iter().map(|&(x, y)| (x, as_nanos(y) as f64)).collect();
     let n = data.len() as f64;
     let nxbar = data.iter().map(|&(x, _)| x).sum::<f64>(); // iter_time > 5e-11 ns
     let nybar = data.iter().map(|&(_, y)| y).sum::<f64>(); // TIME_LIMIT < 2 ^ 64 ns
