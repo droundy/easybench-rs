@@ -165,8 +165,6 @@ is stolen from [bencher], which [states]:
 > is good enough that it is used by default.
 */
 
-extern crate humantime;
-
 use std::f64;
 use std::fmt::{self, Display, Formatter};
 use std::time::*;
@@ -206,9 +204,8 @@ impl Display for Stats {
                 self.samples
             )
         } else {
-            let per_iter: humantime::Duration =
-                Duration::from_nanos(self.ns_per_iter as u64).into();
-            let per_iter = format!("{}", per_iter);
+            let per_iter = Duration::from_nanos(self.ns_per_iter as u64);
+            let per_iter = format!("{:?}", per_iter);
             write!(
                 f,
                 "{:>11} (R²={:.3}, {} iterations in {} samples)",
@@ -224,9 +221,9 @@ impl Display for Stats {
 /// thinking we're going to use it. Make sure to return enough information
 /// to prevent the optimiser from eliminating code from your benchmark! (See
 /// the module docs for more.)
-pub fn bench<F, O>(f: F) -> Stats
+pub fn bench<F, O>(mut f: F) -> Stats
 where
-    F: Fn() -> O,
+    F: FnMut() -> O,
 {
     bench_env((), |_| f())
 }
@@ -255,7 +252,7 @@ where
 /// good to be aware of the possibility.
 pub fn bench_env<F, I, O>(env: I, f: F) -> Stats
 where
-    F: Fn(&mut I) -> O,
+    F: FnMut(&mut I) -> O,
     I: Clone,
 {
     bench_gen_env(move || env.clone(), f)
@@ -282,10 +279,10 @@ where
 /// affected by a hundred nanoseconds. This is a worst-case scenario however,
 /// and I haven't actually been able to trigger it in practice... but it's
 /// good to be aware of the possibility.
-pub fn bench_gen_env<G, F, I, O>(mut gen_env: G, f: F) -> Stats
+pub fn bench_gen_env<G, F, I, O>(mut gen_env: G, mut f: F) -> Stats
 where
     G: FnMut() -> I,
-    F: Fn(&mut I) -> O,
+    F: FnMut(&mut I) -> O,
 {
     let mut data = Vec::new();
     // The time we started the benchmark (not used in results)
@@ -365,14 +362,13 @@ impl Display for ScalingStats {
 }
 impl Display for Scaling {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        let per_iter: humantime::Duration =
-            Duration::from_nanos(self.ns_per_scale as u64).into();
+        let per_iter = Duration::from_nanos(self.ns_per_scale as u64);
         let per_iter = if self.ns_per_scale < 1.0 {
             format!("{:.2}ns", self.ns_per_scale)
         } else if self.ns_per_scale < 10.0 {
             format!("{:.1}ns", self.ns_per_scale)
         } else {
-            format!("{}", per_iter)
+            format!("{:?}", per_iter)
         };
         match self.exponent {
             0 => write!(f, "{:>8}/iter", per_iter),
@@ -391,9 +387,8 @@ impl Display for Scaling {
 }
 impl Scaling {
     pub fn short(&self) -> impl Display {
-        let per_iter: humantime::Duration =
-            Duration::from_nanos(self.ns_per_scale as u64).into();
-        let per_iter = format!("{}", per_iter);
+        let per_iter = Duration::from_nanos(self.ns_per_scale as u64);
+        let per_iter = format!("{:?}", per_iter);
         match self.exponent {
             0 => format!("{}/iter", per_iter),
             1 => format!("{}/N", per_iter),
@@ -427,8 +422,8 @@ where
     // Collect data until BENCH_TIME_MAX is reached.
     for iters in slow_fib(BENCH_SCALE_TIME) {
         // Prepare the environments - nmin per iteration
-        let n = if nmin > 0 { iters*nmin } else { iters };
-        let mut xs = std::iter::repeat_with(|| { gen_env(n) })
+        let n = if nmin > 0 { iters * nmin } else { iters };
+        let mut xs = std::iter::repeat_with(|| gen_env(n))
             .take(iters)
             .collect::<Vec<I>>();
         // Start the clock
@@ -455,8 +450,10 @@ where
             let mut bestpow = 0;
             let mut second_bestpow = 0;
             for pow in 0..5 {
-                let pdata: Vec<_> = data[1..].iter()
-                    .map(|&(n,i,t)| { ((n as f64).powi(pow)*(i as f64), t) }).collect();
+                let pdata: Vec<_> = data[1..]
+                    .iter()
+                    .map(|&(n, i, t)| ((n as f64).powi(pow) * (i as f64), t))
+                    .collect();
                 let (grad, r2) = fregression(&pdata);
                 stats.push(ScalingStats {
                     scaling: Scaling {
@@ -472,9 +469,9 @@ where
                     bestpow = pow as usize;
                 }
             }
-            if elapsed > BENCH_TIME_MAX ||
-                (stats[bestpow].goodness_of_fit > 0.99
-                 && stats[second_bestpow].goodness_of_fit < stats[bestpow].goodness_of_fit)
+            if elapsed > BENCH_TIME_MAX
+                || (stats[bestpow].goodness_of_fit > 0.99
+                    && stats[second_bestpow].goodness_of_fit < stats[bestpow].goodness_of_fit)
             {
                 // println!("finished after {:6}s", elapsed.as_nanos() as f64/1e9);
                 // for s in stats.iter() {
@@ -504,7 +501,10 @@ fn regression(data: &[(usize, Duration)]) -> (f64, f64) {
     // Do all the arithmetic using f64, because it can happen that the
     // squared numbers to overflow using integer arithmetic if the
     // tests are too fast (so we run too many iterations).
-    let data: Vec<_> = data.iter().map(|&(x, y)| (x as f64, as_nanos(y) as f64)).collect();
+    let data: Vec<_> = data
+        .iter()
+        .map(|&(x, y)| (x as f64, y.as_nanos() as f64))
+        .collect();
     let n = data.len() as f64;
     let nxbar = data.iter().map(|&(x, _)| x).sum::<f64>(); // iter_time > 5e-11 ns
     let nybar = data.iter().map(|&(_, y)| y).sum::<f64>(); // TIME_LIMIT < 2 ^ 64 ns
@@ -533,7 +533,10 @@ fn fregression(data: &[(f64, Duration)]) -> (f64, f64) {
     // Do all the arithmetic using f64, because it can happen that the
     // squared numbers to overflow using integer arithmetic if the
     // tests are too fast (so we run too many iterations).
-    let data: Vec<_> = data.iter().map(|&(x, y)| (x, as_nanos(y) as f64)).collect();
+    let data: Vec<_> = data
+        .iter()
+        .map(|&(x, y)| (x as f64, y.as_nanos() as f64))
+        .collect();
     let n = data.len() as f64;
     let nxbar = data.iter().map(|&(x, _)| x).sum::<f64>(); // iter_time > 5e-11 ns
     let nybar = data.iter().map(|&(_, y)| y).sum::<f64>(); // TIME_LIMIT < 2 ^ 64 ns
@@ -547,12 +550,6 @@ fn fregression(data: &[(f64, Duration)]) -> (f64, f64) {
     let r2 = (ncovar * ncovar) / (nxvar * nyvar);
     assert!(r2.is_nan() || r2 <= 1.0);
     (gradient, r2)
-}
-
-// Panics if x is longer than 584 years (1.8e10 seconds)
-fn as_nanos(x: Duration) -> u64 {
-    use std::convert::TryFrom;
-    u64::try_from(x.as_nanos()).expect("overflow: Duration was longer than 584 years")
 }
 
 // Stolen from `bencher`, where it's known as `black_box`.
@@ -623,10 +620,7 @@ mod tests {
     #[test]
     fn scales_o_one() {
         println!();
-        let stats = bench_power_scaling(
-            |n| {n},
-            |_| { thread::sleep(Duration::from_millis(10)) },
-            1);
+        let stats = bench_power_scaling(|n| n, |_| thread::sleep(Duration::from_millis(10)), 1);
         println!("O(N): {}", stats);
         assert_eq!(stats.scaling.exponent, 0);
         println!("   error: {:e}", stats.scaling.ns_per_scale - 1e7);
@@ -637,19 +631,17 @@ mod tests {
     fn scales_o_n() {
         println!();
         let stats = bench_power_scaling(
-            |n| {n},
-            |&mut n| { thread::sleep(Duration::from_millis(10*n as u64)) },
-            1);
+            |n| n,
+            |&mut n| thread::sleep(Duration::from_millis(10 * n as u64)),
+            1,
+        );
         println!("O(N): {}", stats);
         assert_eq!(stats.scaling.exponent, 1);
         println!("   error: {:e}", stats.scaling.ns_per_scale - 1e7);
         assert!((stats.scaling.ns_per_scale - 1e7).abs() < 1e5);
 
         println!();
-        let stats = bench_power_scaling(
-            |n| {n},
-            |&mut n| { (0 .. n as u64).sum::<u64>() },
-            1);
+        let stats = bench_power_scaling(|n| n, |&mut n| (0..n as u64).sum::<u64>(), 1);
         println!("O(N): {}", stats);
         println!("   error: {:e}", stats.scaling.ns_per_scale - 1e7);
         assert_eq!(stats.scaling.exponent, 1);
@@ -659,9 +651,10 @@ mod tests {
     fn scales_o_n_square() {
         println!();
         let stats = bench_power_scaling(
-            |n| {n},
-            |&mut n| { thread::sleep(Duration::from_millis(10*(n*n) as u64)) },
-            1);
+            |n| n,
+            |&mut n| thread::sleep(Duration::from_millis(10 * (n * n) as u64)),
+            1,
+        );
         println!("O(N): {}", stats);
         assert_eq!(stats.scaling.exponent, 2);
         println!("   error: {:e}", stats.scaling.ns_per_scale - 1e7);
@@ -756,7 +749,7 @@ mod tests {
 // by an exponential of 1.1.
 const BENCH_SCALE_TIME: usize = 25;
 
-fn slow_fib(scale_time: usize) -> impl Iterator<Item=usize> {
+fn slow_fib(scale_time: usize) -> impl Iterator<Item = usize> {
     #[derive(Debug)]
     struct SlowFib {
         which: usize,
@@ -778,10 +771,7 @@ fn slow_fib(scale_time: usize) -> impl Iterator<Item=usize> {
     // values.  The rest should be 1s.
     buffer[1] = 0;
     buffer[2] = 0;
-    SlowFib {
-        which: 0,
-        buffer,
-    }
+    SlowFib { which: 0, buffer }
 }
 
 #[test]
@@ -800,26 +790,28 @@ fn test_fib() {
         prev = x;
     }
     let five: Vec<_> = slow_fib(25).take(5).collect();
-    assert_eq!(&five, &[1,1,2,3,4]);
+    assert_eq!(&five, &[1, 1, 2, 3, 4]);
     let more: Vec<_> = slow_fib(25).take(32).collect();
-    assert_eq!(&more,
-               &[ 1, 1, 2, 3, 4, 5, 6, 7, 8, 9,
-                 10,11,12,13,14,15,16,17,18,19,
-                 20,21,22,23,24,25,26,28,31,35,
-                 40,46,
-               ]);
-    let previous_sequence: Vec<_> =
-        (0..32).map(|n| (1.1f64).powi(n).round() as usize).collect();
-    assert_eq!(&previous_sequence,
-               &[ 1, 1, 1, 1, 1, 2, 2, 2, 2, 2,
-                  3, 3, 3, 3, 4, 4, 5, 5, 6, 6,
-                  7, 7, 8, 9,10,11,12,13,14,16,
-                 17,19,
-               ]);
-    let previous_sequence: Vec<_> =
-        (20..40).map(|n| (1.1f64).powi(n).round() as usize).collect();
-    assert_eq!(&previous_sequence,
-               &[ 7, 7, 8, 9,10,11,12,13,14,16,
-                 17,19,21,23,26,28,31,34,37,41,
-               ]);
+    assert_eq!(
+        &more,
+        &[
+            1, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
+            24, 25, 26, 28, 31, 35, 40, 46,
+        ]
+    );
+    let previous_sequence: Vec<_> = (0..32).map(|n| (1.1f64).powi(n).round() as usize).collect();
+    assert_eq!(
+        &previous_sequence,
+        &[
+            1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 9, 10, 11, 12, 13,
+            14, 16, 17, 19,
+        ]
+    );
+    let previous_sequence: Vec<_> = (20..40)
+        .map(|n| (1.1f64).powi(n).round() as usize)
+        .collect();
+    assert_eq!(
+        &previous_sequence,
+        &[7, 7, 8, 9, 10, 11, 12, 13, 14, 16, 17, 19, 21, 23, 26, 28, 31, 34, 37, 41,]
+    );
 }
