@@ -3,6 +3,7 @@ A lightweight micro-benchmarking library which:
 
 * uses linear regression to screen off constant error;
 * handles benchmarks which mutate state;
+* can measure simple polynomial scaling behavior
 * is very easy to use!
 
 Easybench is designed for benchmarks with a running time in the range `1 ns <
@@ -13,13 +14,14 @@ analysis (no outlier detection, no HTML output).
 [criterion]: https://hackage.haskell.org/package/criterion
 
 ```
-use easybench::{bench,bench_env};
+use easybench::{bench,bench_env,bench_scaling};
 
 # fn fib(_: usize) -> usize { 0 }
 #
-// Simple benchmarks are performed with `bench`.
+// Simple benchmarks are performed with `bench` or `bench_scaling`.
 println!("fib 200: {}", bench(|| fib(200) ));
 println!("fib 500: {}", bench(|| fib(500) ));
+println!("fib scaling: {}", bench_scaling(|n| fib(n), 0));
 
 // If a function needs to mutate some state, use `bench_env`.
 println!("reverse: {}", bench_env(vec![0;100], |xs| xs.reverse() ));
@@ -29,10 +31,11 @@ println!("sort:    {}", bench_env(vec![0;100], |xs| xs.sort()    ));
 Running the above yields the following results:
 
 ```none
-fib 200:         38 ns   (R²=1.000, 26053497 iterations in 154 samples)
-fib 500:        110 ns   (R²=1.000, 9131584 iterations in 143 samples)
-reverse:         54 ns   (R²=0.999, 5669992 iterations in 138 samples)
-sort:            93 ns   (R²=1.000, 4685942 iterations in 136 samples)
+fib 200:        50ns (R²=0.995, 20435 iterations in 68 samples)
+fib 500:       144ns (R²=0.999, 7235 iterations in 57 samples)
+fib scaling:   0.30ns/N    (R²=0.999, 8645 iterations in 59 samples)
+reverse:        46ns (R²=0.990, 30550 iterations in 72 samples)
+sort:          137ns (R²=0.991, 187129 iterations in 91 samples)
 ```
 
 Easy! However, please read the [caveats](#caveats) below before using.
@@ -50,15 +53,18 @@ stop either when a global time limit is reached (currently 10 seconds),
 or when we have collected sufficient statistics (but have run for at
 least a millisecond).
 
-If a benchmark must mutate some state while running, before taking a sample
-`n` copies of the initial state are prepared, where `n` is the number of
-iterations in that sample.
+If a benchmark requires some state to run, `n` copies of the initial state are
+prepared before the sample is taken.
 
 Once we have the data, we perform OLS linear regression to find out how
 the sample time varies with the number of iterations in the sample. The
 gradient of the regression line tells us how long it takes to perform a
 single iteration of the benchmark. The R² value is a measure of how much
 noise there is in the data.
+
+If the function is too slow (5 or 10 seconds), the linear regression is skipped,
+and a simple average of timings is used.  For slow functions, any overhead will
+be negligible.
 
 # Caveats
 
@@ -72,45 +78,18 @@ Any work which easybench does once-per-sample is ignored (this is the purpose of
 regression technique described above). However, work which is done once-per-iteration *will* be
 counted in the final times.
 
-* In the case of [`bench`] this amounts to incrementing the loop counter and
+* In the case of [`bench()`] this amounts to incrementing the loop counter and
   [copying the return value](#bonus-caveat-black-box).
-* In the case of [`bench_env`], we also do a lookup into a big vector in
+* In the case of [`bench_env`] and [`bench_gen_env`], we also do a lookup into a big vector in
   order to get the environment for that iteration.
 * If you compile your program unoptimised, there may be additional overhead.
-
-[`bench`]: fn.bench.html
-[`bench_env`]: fn.bench_env.html
 
 The cost of the above operations depend on the details of your benchmark;
 namely: (1) how large is the return value? and (2) does the benchmark evict
 the environment vector from the CPU cache? In practice, these criteria are only
 satisfied by longer-running benchmarks, making these effects hard to measure.
 
-If you have concerns about the results you're seeing, please take a look at
-[the inner loop of `bench_env`][source]. The whole library `cloc`s in at
-under 100 lines of code, so it's pretty easy to read.
-
-[source]: ../src/easybench/lib.rs.html#229-237
-
-## Caveat 2: Sufficient data
-
-**TL;DR: Measurements are unreliable when code takes too long (> 10 ms) to run.**
-
-Each benchmark collects data for at least 1 millisecond and not much
-more than ten seconds. This means that in order to collect a
-statistically significant amount of data, your code should run much
-faster than this.
-
-When inspecting the results, make sure things look statistically
-significant. In particular:
-
-* Make sure the number of samples is big enough. More than 100 is probably OK.
-* Make sure the R² isn't suspiciously low. It's easy to achieve a high R²
-  value when the number of samples is small, so unfortunately the definition
-  of "suspiciously low" depends on how many samples were taken.  As a rule
-  of thumb, expect values greater than 0.99.
-
-## Caveat 3: Pure functions
+## Caveat 2: Pure functions
 
 **TL;DR: Return enough information to prevent the optimiser from eliminating
 code from your benchmark.**
@@ -323,6 +302,15 @@ where
             if elapsed > BENCH_TIME_MAX || r2 > 0.99 {
                 return stats;
             }
+        } else if elapsed > BENCH_TIME_MAX {
+            let total_time: f64 = data.iter().map(|(_, t)| t.as_nanos() as f64).sum();
+            let iterations = data.iter().map(|&(x, _)| x).sum();
+            return Stats {
+                ns_per_iter: total_time / iterations as f64,
+                iterations,
+                goodness_of_fit: 0.0,
+                samples: data.len(),
+            };
         }
     }
     unreachable!()
@@ -385,32 +373,67 @@ impl Display for Scaling {
         }
     }
 }
-impl Scaling {
-    pub fn short(&self) -> impl Display {
-        let per_iter = Duration::from_nanos(self.ns_per_scale as u64);
-        let per_iter = format!("{:?}", per_iter);
-        match self.exponent {
-            0 => format!("{}/iter", per_iter),
-            1 => format!("{}/N", per_iter),
-            2 => format!("{}/N²", per_iter),
-            3 => format!("{}/N³", per_iter),
-            4 => format!("{}/N⁴", per_iter),
-            5 => format!("{}/N⁵", per_iter),
-            6 => format!("{}/N⁶", per_iter),
-            7 => format!("{}/N⁷", per_iter),
-            8 => format!("{}/N⁸", per_iter),
-            9 => format!("{}/N⁹", per_iter),
-            _ => format!("^{}", self.exponent),
-        }
-    }
-}
 
 /// Benchmark the power-law scaling of the function
 ///
 /// This function assumes that the function scales as an integer power
-/// of N, with the power not worse than O(N⁴).  It measures the power
+/// of N.  It conisders higher powers for faster functions, and tries to
+/// keep the measuring time around 10s.  It measures the power
 /// based on n R² goodness of fit parameter.
-pub fn bench_power_scaling<G, F, I, O>(mut gen_env: G, f: F, nmin: usize) -> ScalingStats
+pub fn bench_scaling<F, O>(f: F, nmin: usize) -> ScalingStats
+where
+    F: Fn(usize) -> O,
+{
+    let mut data = Vec::new();
+    // The time we started the benchmark (not used in results)
+    let bench_start = Instant::now();
+
+    // Collect data until BENCH_TIME_MAX is reached.
+    for iters in slow_fib(BENCH_SCALE_TIME) {
+        // Prepare the environments - nmin per iteration
+        let n = if nmin > 0 { iters * nmin } else { iters };
+        // Generate a Vec holding n's to hopefully keep the optimizer
+        // from lifting the function out of the loop, as it could if
+        // we had `f(n)` in there, and `f` were inlined or `const`.
+        let xs = vec![n; iters];
+        // Start the clock
+        let iter_start = Instant::now();
+        for x in xs.into_iter() {
+            // Run the code and pretend to use the output
+            pretend_to_use(f(x));
+        }
+        let time = iter_start.elapsed();
+        data.push((n, iters, time));
+
+        let elapsed = bench_start.elapsed();
+        if elapsed > BENCH_TIME_MIN {
+            let stats = compute_scaling_gen(&data);
+            if elapsed > BENCH_TIME_MAX || stats.goodness_of_fit > 0.99 {
+                return stats;
+            }
+        }
+    }
+    unreachable!()
+}
+
+/// Benchmark the power-law scaling of the function with generated input
+///
+/// This function is like [`bench_scaling`], but uses a generating function
+/// to construct the input to your benchmarked function.
+///
+/// # Example
+/// ```
+/// use easybench::bench_scaling_gen;
+///
+/// let summation = bench_scaling_gen(|n| vec![3.0; n], |v| v.iter().cloned().sum::<f64>(),0);
+/// println!("summation: {}", summation);
+/// assert_eq!(1, summation.scaling.exponent); // summation must run in linear time.
+/// ```
+/// which gives output
+/// ```none
+/// summation:     43ns/N    (R²=0.996, 445 iterations in 29 samples)
+/// ```
+pub fn bench_scaling_gen<G, F, I, O>(mut gen_env: G, f: F, nmin: usize) -> ScalingStats
 where
     G: FnMut(usize) -> I,
     F: Fn(&mut I) -> O,
@@ -438,54 +461,72 @@ where
         data.push((n, iters, time));
 
         let elapsed = bench_start.elapsed();
-        if elapsed > BENCH_TIME_MIN && data.len() > 10 {
-            // If the first iter in a sample is consistently slow, that's fine -
-            // that's why we do the linear regression. If the first sample is slower
-            // than the rest, however, that's not fine.  Therefore, we discard the
-            // first sample as a cache-warming exercise.
-
-            // Compute some stats for each of several different
-            // powers, to see which seems most accurate.
-            let mut stats = Vec::new();
-            let mut bestpow = 0;
-            let mut second_bestpow = 0;
-            for pow in 0..5 {
-                let pdata: Vec<_> = data[1..]
-                    .iter()
-                    .map(|&(n, i, t)| ((n as f64).powi(pow) * (i as f64), t))
-                    .collect();
-                let (grad, r2) = fregression(&pdata);
-                stats.push(ScalingStats {
-                    scaling: Scaling {
-                        exponent: pow as usize,
-                        ns_per_scale: grad,
-                    },
-                    goodness_of_fit: r2,
-                    iterations: data[1..].iter().map(|&(x, _, _)| x).sum(),
-                    samples: data[1..].len(),
-                });
-                if r2 > stats[bestpow].goodness_of_fit {
-                    second_bestpow = bestpow;
-                    bestpow = pow as usize;
-                }
-            }
-            if elapsed > BENCH_TIME_MAX
-                || (stats[bestpow].goodness_of_fit > 0.99
-                    && stats[second_bestpow].goodness_of_fit < stats[bestpow].goodness_of_fit)
-            {
-                // println!("finished after {:6}s", elapsed.as_nanos() as f64/1e9);
-                // for s in stats.iter() {
-                //     println!("  {}", s);
-                // }
-                // for d in data[data.len()-4..].iter() {
-                //     println!("    {}, {} -> {} ns", d.0, d.1, d.2.as_nanos());
-                // }
-                return stats[bestpow].clone();
+        if elapsed > BENCH_TIME_MIN {
+            let stats = compute_scaling_gen(&data);
+            if elapsed > BENCH_TIME_MAX || stats.goodness_of_fit > 0.99 {
+                return stats;
             }
         }
     }
     println!("how did I get here?!");
     unreachable!()
+}
+
+/// This function assumes that the function scales as an integer power
+/// of N, with the power not worse than O(N⁴).  It measures the power
+/// based on n R² goodness of fit parameter.  It returns the best fit.
+/// If it believes itself clueless, the goodness_of_fit is set to zero.
+fn compute_scaling_gen(data: &[(usize, usize, Duration)]) -> ScalingStats {
+    let num_n = {
+        let mut ns = data.iter().map(|(n, _, _)| *n).collect::<Vec<_>>();
+        ns.dedup();
+        ns.len()
+    };
+
+    // If the first iter in a sample is consistently slow, that's fine -
+    // that's why we do the linear regression. If the first sample is slower
+    // than the rest, however, that's not fine.  Therefore, we discard the
+    // first sample as a cache-warming exercise.
+
+    // Compute some stats for each of several different
+    // powers, to see which seems most accurate.
+    let mut stats = Vec::new();
+    let mut bestpow = 0;
+    let mut second_bestpow = 0;
+    for pow in 0..std::cmp::min(num_n / 2 + 1, 10) {
+        let pdata: Vec<_> = data[1..]
+            .iter()
+            .map(|&(n, i, t)| ((n as f64).powi(pow as i32) * (i as f64), t))
+            .collect();
+        let (grad, r2) = fregression(&pdata);
+        stats.push(ScalingStats {
+            scaling: Scaling {
+                exponent: pow as usize,
+                ns_per_scale: grad,
+            },
+            goodness_of_fit: r2,
+            iterations: data[1..].iter().map(|&(x, _, _)| x).sum(),
+            samples: data[1..].len(),
+        });
+        if r2 > stats[bestpow].goodness_of_fit {
+            second_bestpow = bestpow;
+            bestpow = pow as usize;
+        }
+    }
+
+    if num_n < 10 || stats[second_bestpow].goodness_of_fit == stats[bestpow].goodness_of_fit {
+        stats[bestpow].goodness_of_fit = 0.0;
+    } else {
+        // println!("finished...");
+        // for s in stats.iter() {
+        //     println!("  {}", s);
+        // }
+        // for d in data[data.len()-4..].iter() {
+        //     println!("    {}, {} -> {} ns", d.0, d.1, d.2.as_nanos());
+        // }
+        // println!("best is {}", stats[bestpow]);
+    }
+    stats[bestpow].clone()
 }
 
 /// Compute the OLS linear regression line for the given data set, returning
@@ -596,6 +637,7 @@ mod tests {
         println!();
         println!("fib 200: {}", bench(|| fib(200)));
         println!("fib 500: {}", bench(|| fib(500)));
+        println!("fib scaling: {}", bench_scaling(|n| fib(n), 0));
         println!("reverse: {}", bench_env(vec![0; 100], |xs| xs.reverse()));
         println!("sort:    {}", bench_env(vec![0; 100], |xs| xs.sort()));
 
@@ -620,39 +662,35 @@ mod tests {
     #[test]
     fn scales_o_one() {
         println!();
-        let stats = bench_power_scaling(|n| n, |_| thread::sleep(Duration::from_millis(10)), 1);
+        let stats = bench_scaling(|_| thread::sleep(Duration::from_millis(10)), 1);
         println!("O(N): {}", stats);
         assert_eq!(stats.scaling.exponent, 0);
         println!("   error: {:e}", stats.scaling.ns_per_scale - 1e7);
         assert!((stats.scaling.ns_per_scale - 1e7).abs() < 1e6);
+        assert!(format!("{}", stats).contains("samples"));
     }
 
     #[test]
     fn scales_o_n() {
         println!();
-        let stats = bench_power_scaling(
-            |n| n,
-            |&mut n| thread::sleep(Duration::from_millis(10 * n as u64)),
-            1,
-        );
+        let stats = bench_scaling(|n| thread::sleep(Duration::from_millis(10 * n as u64)), 1);
         println!("O(N): {}", stats);
         assert_eq!(stats.scaling.exponent, 1);
         println!("   error: {:e}", stats.scaling.ns_per_scale - 1e7);
         assert!((stats.scaling.ns_per_scale - 1e7).abs() < 1e5);
 
-        println!();
-        let stats = bench_power_scaling(|n| n, |&mut n| (0..n as u64).sum::<u64>(), 1);
-        println!("O(N): {}", stats);
-        println!("   error: {:e}", stats.scaling.ns_per_scale - 1e7);
-        assert_eq!(stats.scaling.exponent, 1);
+        // println!("Summing integers");
+        // let stats = bench_scaling(|n| (0..n as u64).sum::<u64>(), 1);
+        // println!("O(N): {}", stats);
+        // println!("   error: {:e}", stats.scaling.ns_per_scale - 1e7);
+        // assert_eq!(stats.scaling.exponent, 1);
     }
 
     #[test]
     fn scales_o_n_square() {
         println!();
-        let stats = bench_power_scaling(
-            |n| n,
-            |&mut n| thread::sleep(Duration::from_millis(10 * (n * n) as u64)),
+        let stats = bench_scaling(
+            |n| thread::sleep(Duration::from_millis(10 * (n * n) as u64)),
             1,
         );
         println!("O(N): {}", stats);
@@ -670,10 +708,30 @@ mod tests {
     #[test]
     fn very_slow() {
         println!();
-        println!(
-            "very slow: {}",
-            bench(|| thread::sleep(Duration::from_millis(400)))
-        );
+        let stats = bench(|| thread::sleep(Duration::from_millis(400)));
+        println!("very slow: {}", stats);
+        assert!(stats.ns_per_iter > 399.0e6);
+        assert_eq!(3, stats.samples);
+    }
+
+    #[test]
+    fn painfully_slow() {
+        println!();
+        let stats = bench(|| thread::sleep(Duration::from_secs(11)));
+        println!("painfully slow: {}", stats);
+        println!("ns {}", stats.ns_per_iter);
+        assert!(stats.ns_per_iter > 11.0e9);
+        assert_eq!(1, stats.iterations);
+    }
+
+    #[test]
+    fn sadly_slow() {
+        println!();
+        let stats = bench(|| thread::sleep(Duration::from_secs(6)));
+        println!("sadly slow: {}", stats);
+        println!("ns {}", stats.ns_per_iter);
+        assert!(stats.ns_per_iter > 6.0e9);
+        assert_eq!(2, stats.iterations);
     }
 
     #[test]
