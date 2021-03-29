@@ -679,11 +679,15 @@ mod tests {
         println!("   error: {:e}", stats.scaling.ns_per_scale - 1e7);
         assert!((stats.scaling.ns_per_scale - 1e7).abs() < 1e5);
 
-        // println!("Summing integers");
-        // let stats = bench_scaling(|n| (0..n as u64).sum::<u64>(), 1);
-        // println!("O(N): {}", stats);
-        // println!("   error: {:e}", stats.scaling.ns_per_scale - 1e7);
-        // assert_eq!(stats.scaling.exponent, 1);
+        println!("Summing integers");
+        let stats = bench_scaling_gen(
+            |n| (0..n as u64).collect::<Vec<_>>(),
+            |v| v.iter().cloned().sum::<u64>(),
+            1,
+        );
+        println!("O(N): {}", stats);
+        println!("   error: {:e}", stats.scaling.ns_per_scale - 1e7);
+        assert_eq!(stats.scaling.exponent, 1);
     }
 
     #[test]
