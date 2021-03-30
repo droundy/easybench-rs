@@ -466,10 +466,16 @@ where
     // The time we started the benchmark (not used in results)
     let bench_start = Instant::now();
 
+    let mut am_slow = false;
     // Collect data until BENCH_TIME_MAX is reached.
     for iters in slow_fib(BENCH_SCALE_TIME) {
         // Prepare the environments - nmin per iteration
         let n = if nmin > 0 { iters * nmin } else { iters };
+        let iters = if am_slow {
+            1
+        } else {
+            iters
+        };
         let mut xs = std::iter::repeat_with(|| gen_env(n))
             .take(iters)
             .collect::<Vec<I>>();
@@ -482,6 +488,9 @@ where
             pretend_to_use(f(x));
         }
         let time = iter_start.elapsed();
+        if !am_slow && iters == 1 && time > Duration::from_millis(1) {
+            am_slow = true;
+        }
         data.push((n, iters, time));
 
         let elapsed = bench_start.elapsed();

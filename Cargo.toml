@@ -1,6 +1,6 @@
 [package]
 name = "scaling"
-version = "0.1.0"
+version = "0.1.1"
 authors = ["David Roundy <daveroundy@gmail.com>", "Alex Sayers <alex@asayers.com>"]
 description = "A lightweight benchmarking library that measures scaling behavior"
 edition = "2018"
