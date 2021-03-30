@@ -477,7 +477,7 @@ where
     for iters in slow_fib(BENCH_SCALE_TIME) {
         // Prepare the environments - nmin per iteration
         let n = if nmin > 0 { iters * nmin } else { iters };
-        let iters = if am_slow { 1 } else { iters };
+        let iters = if am_slow { 1 + (iters & 1) } else { iters };
         let mut xs = std::iter::repeat_with(|| gen_env(n))
             .take(iters)
             .collect::<Vec<I>>();
@@ -490,7 +490,7 @@ where
             pretend_to_use(f(x));
         }
         let time = iter_start.elapsed();
-        if !am_slow && iters == 1 && time > Duration::from_millis(1) {
+        if !am_slow && iters == 1 && time > Duration::from_micros(1) {
             am_slow = true;
         }
         data.push((n, iters, time));
@@ -555,7 +555,7 @@ fn compute_scaling_gen(data: &[(usize, usize, Duration)]) -> ScalingStats {
                 iterations: data[1..].iter().map(|&(x, _, _)| x).sum(),
                 samples: data[1..].len(),
             });
-            if r2 > stats[best].goodness_of_fit {
+            if r2 > stats[best].goodness_of_fit || stats[best].goodness_of_fit.is_nan() {
                 second_best = best;
                 best = stats.len() - 1;
             }
@@ -565,14 +565,14 @@ fn compute_scaling_gen(data: &[(usize, usize, Duration)]) -> ScalingStats {
     if num_n < 10 || stats[second_best].goodness_of_fit == stats[best].goodness_of_fit {
         stats[best].goodness_of_fit = 0.0;
     } else {
-        println!("finished...");
-        for s in stats.iter() {
-            println!("  {}", s);
-        }
+        // println!("finished...");
+        // for s in stats.iter() {
+        //     println!("  {}", s);
+        // }
         // for d in data[data.len()-4..].iter() {
         //     println!("    {}, {} -> {} ns", d.0, d.1, d.2.as_nanos());
         // }
-        println!("best is {}", stats[best]);
+        // println!("best is {}", stats[best]);
     }
     stats[best].clone()
 }
@@ -627,16 +627,17 @@ fn fregression(data: &[(f64, Duration)]) -> (f64, f64) {
         .map(|&(x, y)| (x as f64, y.as_nanos() as f64))
         .collect();
     let n = data.len() as f64;
-    let nxbar = data.iter().map(|&(x, _)| x).sum::<f64>(); // iter_time > 5e-11 ns
-    let nybar = data.iter().map(|&(_, y)| y).sum::<f64>(); // TIME_LIMIT < 2 ^ 64 ns
-    let nxxbar = data.iter().map(|&(x, _)| x * x).sum::<f64>(); // num_iters < 13_000_000_000
-    let nyybar = data.iter().map(|&(_, y)| y * y).sum::<f64>(); // TIME_LIMIT < 4.3 e9 ns
-    let nxybar = data.iter().map(|&(x, y)| x * y).sum::<f64>();
-    let ncovar = nxybar - ((nxbar * nybar) / n);
-    let nxvar = nxxbar - ((nxbar * nxbar) / n);
-    let nyvar = nyybar - ((nybar * nybar) / n);
-    let gradient = ncovar / nxvar;
-    let r2 = (ncovar * ncovar) / (nxvar * nyvar);
+    let xbar = data.iter().map(|&(x, _)| x).sum::<f64>() / n;
+    let xvar = data.iter().map(|&(x, _)| (x - xbar).powi(2)).sum::<f64>() / n;
+    let ybar = data.iter().map(|&(_, y)| y).sum::<f64>() / n;
+    let yvar = data.iter().map(|&(_, y)| (y - ybar).powi(2)).sum::<f64>() / n;
+    let covar = data
+        .iter()
+        .map(|&(x, y)| (x - xbar) * (y - ybar))
+        .sum::<f64>()
+        / n;
+    let gradient = covar / xvar;
+    let r2 = covar.powi(2) / (xvar * yvar);
     assert!(r2.is_nan() || r2 <= 1.0);
     (gradient, r2)
 }
