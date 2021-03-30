@@ -149,6 +149,9 @@ use std::f64;
 use std::fmt::{self, Display, Formatter};
 use std::time::*;
 
+// We try to spend at very most this many seconds (roughly) in total on
+// each benchmark.
+const BENCH_TIME_MAX_DESPERATION: Duration = Duration::from_secs(120);
 // We try to spend at most this many seconds (roughly) in total on
 // each benchmark.
 const BENCH_TIME_MAX: Duration = Duration::from_secs(10);
@@ -427,7 +430,10 @@ where
         let elapsed = bench_start.elapsed();
         if elapsed > BENCH_TIME_MIN {
             let stats = compute_scaling_gen(&data);
-            if elapsed > BENCH_TIME_MAX || stats.goodness_of_fit > 0.99 {
+            if elapsed > BENCH_TIME_MAX_DESPERATION
+                || (elapsed > BENCH_TIME_MAX && stats.goodness_of_fit > 0.0)
+                || stats.goodness_of_fit > 0.99
+            {
                 return stats;
             }
         }
@@ -471,11 +477,7 @@ where
     for iters in slow_fib(BENCH_SCALE_TIME) {
         // Prepare the environments - nmin per iteration
         let n = if nmin > 0 { iters * nmin } else { iters };
-        let iters = if am_slow {
-            1
-        } else {
-            iters
-        };
+        let iters = if am_slow { 1 } else { iters };
         let mut xs = std::iter::repeat_with(|| gen_env(n))
             .take(iters)
             .collect::<Vec<I>>();
@@ -496,7 +498,10 @@ where
         let elapsed = bench_start.elapsed();
         if elapsed > BENCH_TIME_MIN {
             let stats = compute_scaling_gen(&data);
-            if elapsed > BENCH_TIME_MAX || stats.goodness_of_fit > 0.99 {
+            if elapsed > BENCH_TIME_MAX_DESPERATION
+                || (elapsed > BENCH_TIME_MAX && stats.goodness_of_fit > 0.0)
+                || stats.goodness_of_fit > 0.99
+            {
                 return stats;
             }
         }
@@ -737,7 +742,11 @@ mod tests {
     fn scales_o_n_log_n_looks_like_n() {
         println!("Sorting integers");
         let stats = bench_scaling_gen(
-            |n| (0..n as u64).map(|i| (i*13 + 5) % 137).collect::<Vec<_>>(),
+            |n| {
+                (0..n as u64)
+                    .map(|i| (i * 13 + 5) % 137)
+                    .collect::<Vec<_>>()
+            },
             |v| v.sort(),
             1,
         );
