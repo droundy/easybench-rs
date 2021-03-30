@@ -330,9 +330,11 @@ pub struct ScalingStats {
 /// The timing and scaling results (without statistics) for a benchmark.
 #[derive(Debug, PartialEq, Clone)]
 pub struct Scaling {
-    /// The scaling exponent
+    /// The scaling power
     /// If this is 2, for instance, you have an O(N²) algorithm.
-    pub exponent: usize,
+    pub power: usize,
+    /// An exponetial behavior, i.e. 2ᴺ
+    pub exponential: usize,
     /// The time, in nanoseconds, per scaled size of the problem. If
     /// the problem scales as O(N²) for instance, this is the number
     /// of nanoseconds per N².
@@ -358,27 +360,43 @@ impl Display for Scaling {
         } else {
             format!("{:?}", per_iter)
         };
-        match self.exponent {
-            0 => write!(f, "{:>8}/iter", per_iter),
-            1 => write!(f, "{:>8}/N   ", per_iter),
-            2 => write!(f, "{:>8}/N²  ", per_iter),
-            3 => write!(f, "{:>8}/N³  ", per_iter),
-            4 => write!(f, "{:>8}/N⁴  ", per_iter),
-            5 => write!(f, "{:>8}/N⁵  ", per_iter),
-            6 => write!(f, "{:>8}/N⁶  ", per_iter),
-            7 => write!(f, "{:>8}/N⁷  ", per_iter),
-            8 => write!(f, "{:>8}/N⁸  ", per_iter),
-            9 => write!(f, "{:>8}/N⁹  ", per_iter),
-            _ => write!(f, "{:>8}/N^{}", per_iter, self.exponent),
+        if self.exponential == 1 {
+            match self.power {
+                0 => write!(f, "{:>8}/iter", per_iter),
+                1 => write!(f, "{:>8}/N   ", per_iter),
+                2 => write!(f, "{:>8}/N²  ", per_iter),
+                3 => write!(f, "{:>8}/N³  ", per_iter),
+                4 => write!(f, "{:>8}/N⁴  ", per_iter),
+                5 => write!(f, "{:>8}/N⁵  ", per_iter),
+                6 => write!(f, "{:>8}/N⁶  ", per_iter),
+                7 => write!(f, "{:>8}/N⁷  ", per_iter),
+                8 => write!(f, "{:>8}/N⁸  ", per_iter),
+                9 => write!(f, "{:>8}/N⁹  ", per_iter),
+                _ => write!(f, "{:>8}/N^{}", per_iter, self.power),
+            }
+        } else {
+            match self.power {
+                0 => write!(f, "{:>8}/{}ᴺ", per_iter, self.exponential),
+                1 => write!(f, "{:>8}/(N{}ᴺ)   ", per_iter, self.exponential),
+                2 => write!(f, "{:>8}/(N²{}ᴺ)  ", per_iter, self.exponential),
+                3 => write!(f, "{:>8}/(N³{}ᴺ)  ", per_iter, self.exponential),
+                4 => write!(f, "{:>8}/(N⁴{}ᴺ)  ", per_iter, self.exponential),
+                5 => write!(f, "{:>8}/(N⁵{}ᴺ)  ", per_iter, self.exponential),
+                6 => write!(f, "{:>8}/(N⁶{}ᴺ)  ", per_iter, self.exponential),
+                7 => write!(f, "{:>8}/(N⁷{}ᴺ)  ", per_iter, self.exponential),
+                8 => write!(f, "{:>8}/(N⁸{}ᴺ)  ", per_iter, self.exponential),
+                9 => write!(f, "{:>8}/(N⁹{}ᴺ)  ", per_iter, self.exponential),
+                _ => write!(f, "{:>8}/(N^{}{}ᴺ)", per_iter, self.power, self.exponential),
+            }
         }
     }
 }
 
 /// Benchmark the power-law scaling of the function
 ///
-/// This function assumes that the function scales as an integer power
-/// of N.  It conisders higher powers for faster functions, and tries to
-/// keep the measuring time around 10s.  It measures the power
+/// This function assumes that the function scales as 𝑶(𝑁ᴾ𝐸ᴺ).
+/// It conisders higher powers for faster functions, and tries to
+/// keep the measuring time around 10s.  It measures the power ᴾ and exponential base 𝐸
 /// based on n R² goodness of fit parameter.
 pub fn bench_scaling<F, O>(f: F, nmin: usize) -> ScalingStats
 where
@@ -421,13 +439,18 @@ where
 /// This function is like [`bench_scaling`], but uses a generating function
 /// to construct the input to your benchmarked function.
 ///
+/// This function assumes that the function scales as 𝑶(𝑁ᴾ𝐸ᴺ).
+/// It conisders higher powers for faster functions, and tries to
+/// keep the measuring time around 10s.  It measures the power ᴾ and exponential base 𝐸
+/// based on n R² goodness of fit parameter.
+///
 /// # Example
 /// ```
 /// use easybench::bench_scaling_gen;
 ///
 /// let summation = bench_scaling_gen(|n| vec![3.0; n], |v| v.iter().cloned().sum::<f64>(),0);
 /// println!("summation: {}", summation);
-/// assert_eq!(1, summation.scaling.exponent); // summation must run in linear time.
+/// assert_eq!(1, summation.scaling.power); // summation must run in linear time.
 /// ```
 /// which gives output
 /// ```none
@@ -472,9 +495,8 @@ where
     unreachable!()
 }
 
-/// This function assumes that the function scales as an integer power
-/// of N, with the power not worse than O(N⁴).  It measures the power
-/// based on n R² goodness of fit parameter.  It returns the best fit.
+/// This function assumes that the function scales as 𝑶(𝑁ᴾ𝐸ᴺ).  It measures the scaling
+/// based on n R² goodness of fit parameter, and returns the best fit.
 /// If it believes itself clueless, the goodness_of_fit is set to zero.
 fn compute_scaling_gen(data: &[(usize, usize, Duration)]) -> ScalingStats {
     let num_n = {
@@ -491,42 +513,53 @@ fn compute_scaling_gen(data: &[(usize, usize, Duration)]) -> ScalingStats {
     // Compute some stats for each of several different
     // powers, to see which seems most accurate.
     let mut stats = Vec::new();
-    let mut bestpow = 0;
-    let mut second_bestpow = 0;
-    for pow in 0..std::cmp::min(num_n / 2 + 1, 10) {
-        let pdata: Vec<_> = data[1..]
-            .iter()
-            .map(|&(n, i, t)| ((n as f64).powi(pow as i32) * (i as f64), t))
-            .collect();
-        let (grad, r2) = fregression(&pdata);
-        stats.push(ScalingStats {
-            scaling: Scaling {
-                exponent: pow as usize,
-                ns_per_scale: grad,
-            },
-            goodness_of_fit: r2,
-            iterations: data[1..].iter().map(|&(x, _, _)| x).sum(),
-            samples: data[1..].len(),
-        });
-        if r2 > stats[bestpow].goodness_of_fit {
-            second_bestpow = bestpow;
-            bestpow = pow as usize;
+    let mut best = 0;
+    let mut second_best = 0;
+    for i in 1..num_n / 2 + 2 {
+        for power in 0..i {
+            let exponential = i - power;
+            let pdata: Vec<_> = data[1..]
+                .iter()
+                .map(|&(n, i, t)| {
+                    (
+                        (exponential as f64).powi(n as i32)
+                            * (n as f64).powi(power as i32)
+                            * (i as f64),
+                        t,
+                    )
+                })
+                .collect();
+            let (grad, r2) = fregression(&pdata);
+            stats.push(ScalingStats {
+                scaling: Scaling {
+                    power,
+                    exponential,
+                    ns_per_scale: grad,
+                },
+                goodness_of_fit: r2,
+                iterations: data[1..].iter().map(|&(x, _, _)| x).sum(),
+                samples: data[1..].len(),
+            });
+            if r2 > stats[best].goodness_of_fit {
+                second_best = best;
+                best = stats.len() - 1;
+            }
         }
     }
 
-    if num_n < 10 || stats[second_bestpow].goodness_of_fit == stats[bestpow].goodness_of_fit {
-        stats[bestpow].goodness_of_fit = 0.0;
+    if num_n < 10 || stats[second_best].goodness_of_fit == stats[best].goodness_of_fit {
+        stats[best].goodness_of_fit = 0.0;
     } else {
-        // println!("finished...");
-        // for s in stats.iter() {
-        //     println!("  {}", s);
-        // }
+        println!("finished...");
+        for s in stats.iter() {
+            println!("  {}", s);
+        }
         // for d in data[data.len()-4..].iter() {
         //     println!("    {}, {} -> {} ns", d.0, d.1, d.2.as_nanos());
         // }
-        // println!("best is {}", stats[bestpow]);
+        println!("best is {}", stats[best]);
     }
-    stats[bestpow].clone()
+    stats[best].clone()
 }
 
 /// Compute the OLS linear regression line for the given data set, returning
@@ -664,7 +697,7 @@ mod tests {
         println!();
         let stats = bench_scaling(|_| thread::sleep(Duration::from_millis(10)), 1);
         println!("O(N): {}", stats);
-        assert_eq!(stats.scaling.exponent, 0);
+        assert_eq!(stats.scaling.power, 0);
         println!("   error: {:e}", stats.scaling.ns_per_scale - 1e7);
         assert!((stats.scaling.ns_per_scale - 1e7).abs() < 1e6);
         assert!(format!("{}", stats).contains("samples"));
@@ -675,7 +708,7 @@ mod tests {
         println!();
         let stats = bench_scaling(|n| thread::sleep(Duration::from_millis(10 * n as u64)), 1);
         println!("O(N): {}", stats);
-        assert_eq!(stats.scaling.exponent, 1);
+        assert_eq!(stats.scaling.power, 1);
         println!("   error: {:e}", stats.scaling.ns_per_scale - 1e7);
         assert!((stats.scaling.ns_per_scale - 1e7).abs() < 1e5);
 
@@ -687,7 +720,31 @@ mod tests {
         );
         println!("O(N): {}", stats);
         println!("   error: {:e}", stats.scaling.ns_per_scale - 1e7);
-        assert_eq!(stats.scaling.exponent, 1);
+        assert_eq!(stats.scaling.power, 1);
+    }
+
+    #[test]
+    fn scales_o_n_log_n_looks_like_n() {
+        println!("Sorting integers");
+        let stats = bench_scaling_gen(
+            |n| (0..n as u64).map(|i| (i*13 + 5) % 137).collect::<Vec<_>>(),
+            |v| v.sort(),
+            1,
+        );
+        println!("O(N log N): {}", stats);
+        println!("   error: {:e}", stats.scaling.ns_per_scale - 1e7);
+        assert_eq!(stats.scaling.power, 1);
+    }
+
+    #[test]
+    fn scales_o_2_to_the_n() {
+        println!();
+        let stats = bench_scaling(|n| thread::sleep(Duration::from_nanos((1 << n) as u64)), 1);
+        println!("O(2ᴺ): {}", stats);
+        assert_eq!(stats.scaling.power, 0);
+        assert_eq!(stats.scaling.exponential, 2);
+        println!("   error: {:e}", stats.scaling.ns_per_scale - 1.0);
+        assert!((stats.scaling.ns_per_scale - 1.0).abs() < 0.2);
     }
 
     #[test]
@@ -698,7 +755,7 @@ mod tests {
             1,
         );
         println!("O(N): {}", stats);
-        assert_eq!(stats.scaling.exponent, 2);
+        assert_eq!(stats.scaling.power, 2);
         println!("   error: {:e}", stats.scaling.ns_per_scale - 1e7);
         assert!((stats.scaling.ns_per_scale - 1e7).abs() < 1e5);
     }
