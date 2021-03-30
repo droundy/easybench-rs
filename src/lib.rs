@@ -3,18 +3,19 @@ A lightweight micro-benchmarking library which:
 
 * uses linear regression to screen off constant error;
 * handles benchmarks which mutate state;
-* can measure simple polynomial scaling behavior
+* can measure simple polynomial or exponential scaling behavior
 * is very easy to use!
 
-Easybench is designed for benchmarks with a running time in the range `1 ns <
-x < 1 ms` - results may be unreliable if benchmarks are very quick or very
-slow. It's inspired by [criterion], but doesn't do as much sophisticated
+`scaling` is designed to work with either slow or fast functions.
+It's forked from [easybench], which is itself inspired by [criterion],
+but doesn't do as much sophisticated
 analysis (no outlier detection, no HTML output).
 
-[criterion]: https://hackage.haskell.org/package/criterion
+[easybench]: https://crates.io/crates/easybench
+[criterion]: https://crates.io/crates/criterion
 
 ```
-use easybench::{bench,bench_env,bench_scaling};
+use scaling::{bench,bench_env,bench_scaling};
 
 # fn fib(_: usize) -> usize { 0 }
 #
@@ -74,7 +75,7 @@ be negligible.
 **noise of your
 benchmark.**
 
-Any work which easybench does once-per-sample is ignored (this is the purpose of the linear
+Any work which `scaling` does once-per-sample is ignored (this is the purpose of the linear
 regression technique described above). However, work which is done once-per-iteration *will* be
 counted in the final times.
 
@@ -98,7 +99,7 @@ Benchmarking pure functions involves a nasty gotcha which users should be
 aware of. Consider the following benchmarks:
 
 ```
-# use easybench::{bench,bench_env};
+# use scaling::{bench,bench_env};
 #
 # fn fib(_: usize) -> usize { 0 }
 #
@@ -122,7 +123,7 @@ with a no-op (which clocks in at 0 ns).
 
 What about the other two? `fib_1` looks very similar, with one exception:
 the closure which we're benchmarking returns the result of the `fib(500)`
-call. When it runs your code, easybench takes the return value and tricks the
+call. When it runs your code, `scaling` takes the return value and tricks the
 optimiser into thinking it's going to use it for something, before throwing
 it away. This is why `fib_1` is safe from having code accidentally eliminated.
 
@@ -132,7 +133,7 @@ environment. This has the desired effect, but looks a bit weird.
 
 ## Bonus caveat: Black box
 
-The function which easybench uses to trick the optimiser (`black_box`)
+The function which `scaling` uses to trick the optimiser (`black_box`)
 is stolen from [bencher], which [states]:
 
 [bencher]: https://docs.rs/bencher/
@@ -446,7 +447,7 @@ where
 ///
 /// # Example
 /// ```
-/// use easybench::bench_scaling_gen;
+/// use scaling::bench_scaling_gen;
 ///
 /// let summation = bench_scaling_gen(|n| vec![3.0; n], |v| v.iter().cloned().sum::<f64>(),0);
 /// println!("summation: {}", summation);

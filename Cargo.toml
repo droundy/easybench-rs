@@ -1,11 +1,11 @@
 [package]
-name = "easybench"
-version = "1.1.0"
-authors = ["Alex Sayers <alex@asayers.com>"]
-description = "A lightweight benchmarking library"
+name = "scaling"
+version = "0.1.0"
+authors = ["David Roundy <daveroundy@gmail.com>", "Alex Sayers <alex@asayers.com>"]
+description = "A lightweight benchmarking library that measures scaling behavior"
 edition = "2018"
-documentation = "https://docs.rs/easybench/"
-repository = "https://github.com/asayers/easybench-rs"
+documentation = "https://docs.rs/easybench_scaling/"
+repository = "https://github.com/droundy/easybench-rs"
 readme = "README.md"
-keywords = ["benchmark"]
+keywords = ["benchmark", "scaling"]
 license = "MIT OR Apache-2.0"
